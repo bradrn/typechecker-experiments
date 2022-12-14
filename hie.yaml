@@ -1,0 +1,8 @@
+cradle:
+  cabal:
+    - path: "./test/"
+      component: "typechecker:test:typechecker-test"
+    - path: "./app/"
+      component: "typechecker:exe:typechecker"
+    - path: "./src/"
+      component: "lib:typechecker"

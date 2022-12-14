@@ -1,0 +1,53 @@
+cabal-version:      2.4
+name:               typechecker
+version:            0.1.0.0
+synopsis:
+homepage:
+-- bug-reports:
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Brad Neimann
+maintainer:         brad.neimann@hotmail.com
+
+-- copyright:
+-- category:
+extra-source-files: CHANGELOG.md
+
+library
+    ghc-options:      -Wall
+    exposed-modules:  Typecheck
+                    , Expr
+                    , Lexer
+                    , Parser
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base ^>=4.16.3.0
+                    , array
+                    , containers
+                    , mtl
+                    , text
+                    , primitive
+    build-tool-depends: alex:alex, happy:happy
+    hs-source-dirs:   src
+    default-language: Haskell2010
+
+executable typechecker
+    ghc-options:      -Wall
+    main-is:          Main.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base ^>=4.16.3.0
+                    , typechecker
+
+    hs-source-dirs:   app
+    default-language: Haskell2010
+
+test-suite typechecker-test
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Test.hs
+    build-depends:    base ^>=4.16.3.0
+                    , typechecker
+                    , tasty
+                    , tasty-hunit
