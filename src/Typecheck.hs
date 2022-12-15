@@ -30,7 +30,6 @@ data InferError
     = OccursError
     | CannotUnify (Type Void) (Type Void)
     | UnknownName Text
-    | LamNotFun
     deriving (Eq, Show)
 
 type Env v = Map Text (Type v)
@@ -193,10 +192,8 @@ check = \x t -> do
         for_ atas $ \(a, ta) -> do
             ta' <- infer a
             unify ta' ta
-    check' (Lam vs x) t = case t of
-        TFun ats rt ->
-            withEnv (foldr (.) id $ zipWith M.insert vs ats) $ check' x rt
-        _ -> throwError LamNotFun
+    check' (Lam vs x) (TFun ats rt) =
+        withEnv (foldr (.) id $ zipWith M.insert vs ats) $ check' x rt
     check' (Let v x y) t = do
         tv <- generalise =<< infer x
         withEnv (M.insert v tv) $ check' y t
