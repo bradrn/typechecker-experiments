@@ -50,7 +50,8 @@ main = defaultMain $ testGroup "Tests"
             CannotUnify (qt_ 3 --> qt_ 3) int
         , testTypecheck "bidi" "Let(id, x->x, ((x, z) -> z(x(id), x(1))) : ((Int -> a), (a, a) -> b) -> b)" $ Left $
             CannotUnify int (qt_ 3 --> qt_ 3)
-        , testTypecheck "lamnotfun" "(x -> x) : int" $ Left LamNotFun
+        , testTypecheck "lamnotfun" "(x -> x) : Int" $ Left $
+            CannotUnify (qt_ 0 --> qt_ 0) int
         , testTypecheck "list" "[1,2,x->x]" $ Left $
             CannotUnify int (qt_ 1 --> qt_ 1)
         ]

@@ -30,8 +30,6 @@ data InferError
     = OccursError
     | CannotUnify (Type Void) (Type Void)
     | UnknownName Text
-    | LamNotFun
-    | ListNotList
     deriving (Eq, Show)
 
 type Env v = Map Text (Type v)
@@ -194,16 +192,13 @@ check = \x t -> do
         for_ atas $ \(a, ta) -> do
             ta' <- infer a
             unify ta' ta
-    check' (Lam vs x) t = case t of
-        TFun ats rt ->
-            withEnv (foldr (.) id $ zipWith M.insert vs ats) $ check' x rt
-        _ -> throwError LamNotFun
+    check' (Lam vs x) (TFun ats rt) =
+        withEnv (foldr (.) id $ zipWith M.insert vs ats) $ check' x rt
     check' (Let v x y) t = do
         tv <- generalise =<< infer x
         withEnv (M.insert v tv) $ check' y t
-    check' (List xs) t = case t of
-        TCon "List" [rt] -> traverse_ (flip check' rt) xs
-        _ -> throwError ListNotList
+    check' (List xs) (TCon "List" [rt]) =
+        traverse_ (flip check' rt) xs
     check' x t = do
         tx <- infer x
         unify tx t
