@@ -1,4 +1,6 @@
 {
+{-# LANGUAGE OverloadedStrings #-}
+
 module Parser (parseExpr) where
 
 import Data.Text (Text, pack)
@@ -15,11 +17,14 @@ import qualified Lexer
 
 %token
   Let     { Lexer.Let }
+  List    { Lexer.List }
   ','     { Lexer.Comma }
   Lambda  { Lexer.Lambda }
   '->'    { Lexer.Arrow }
   '('     { Lexer.LPar }
   ')'     { Lexer.RPar }
+  '['     { Lexer.LBrk }
+  ']'     { Lexer.RBrk }
   ':'     { Lexer.Colon }
   tvarstr { Lexer.TVar $$  }
   lit     { Lexer.Lit $$ }
@@ -45,6 +50,8 @@ Expr
   | var '->' Expr                     { Lam [$1] $3 }
   | '(' some(var) ')' '->' Expr       { Lam $2 $5 }
   | Let '(' var ',' Expr ',' Expr ')' { Let $3 $5 $7 }
+  | List '(' some(Expr) ')'           { List $3 }
+  | '[' some(Expr) ']'                { List $2 }
   | Expr ':' Type                     { Asc $1 $3 }
   | Expr '(' some(Expr) ')'           { App $1 $3 }
   | '(' Expr ')'                      { $2 }
@@ -53,6 +60,7 @@ Type
   :: { Type Void }
   : var                          { TCon $1 [] }
   | var '(' some(Type) ')'       { TCon $1 $3 }
+  | List '(' some(Type) ')'      { TCon "List" $3 }
   | tvar                         { TQVar $1 }
   | Type '->' Type               { TFun [$1] $3 }
   | '(' some(Type) ')' '->' Type { TFun $2 $5 }

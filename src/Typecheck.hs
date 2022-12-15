@@ -31,6 +31,7 @@ data InferError
     | CannotUnify (Type Void) (Type Void)
     | UnknownName Text
     | LamNotFun
+    | ListNotList
     deriving (Eq, Show)
 
 type Env v = Map Text (Type v)
@@ -200,6 +201,9 @@ check = \x t -> do
     check' (Let v x y) t = do
         tv <- generalise =<< infer x
         withEnv (M.insert v tv) $ check' y t
+    check' (List xs) t = case t of
+        TCon "List" [rt] -> traverse_ (flip check' rt) xs
+        _ -> throwError ListNotList
     check' x t = do
         tx <- infer x
         unify tx t
@@ -224,6 +228,10 @@ infer (Let v x y) = do
     tv' <- infer x
     tv <- generalise tv' -- =<< infer x
     withEnv (M.insert v tv) $ infer y
+infer (List xs) = do
+    tr <- newvar
+    traverse_ (unify tr <=< infer) xs
+    pure $ TCon "List" [tr]
 infer (Asc x t) = check x t
 
 runInfer :: (forall s. Infer s a) -> Env Void -> Either InferError a

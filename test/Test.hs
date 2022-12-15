@@ -23,6 +23,7 @@ testTypecheck n x t = testCase n $ typecheck x @?= t
 qt = TQVar . fromString . ('t':) . show
 qt_ = TQVar . fromString . ("__t"++) . show
 int = TCon "Int" []
+list = TCon "List" . pure
 (-->) i o = TFun [i] o
 (-:>) is o = TFun is o
 
@@ -34,6 +35,8 @@ main = defaultMain $ testGroup "Tests"
         , testTypecheck "intfun" "x -> Let(y, x, y(1))"        $ Right $ (int --> qt 1) --> qt 1
         , testTypecheck "unify" "(x, y) -> z -> z(x(1), x(y))" $ Right $ TFun [int --> qt 4, int] $ ([qt 4, qt 4] -:> qt 5) --> qt 5
         , testTypecheck "asc" "x -> (x : Int)"                 $ Right $ int --> int
+        , testTypecheck "list1" "[1,2,3]"                      $ Right $ list int
+        , testTypecheck "list2" "[1,2,3] : List(Int)"          $ Right $ list int
         -- below from https://okmij.org/ftp/ML/generalization/unsound.ml
         , testTypecheck "gen1" "(x, y) -> Let(x, x(y), x -> y(x))" $ Right $
             [(qt 3 --> qt 4) --> qt 2, qt 3 --> qt 4] -:> (qt 3 --> qt 4)
@@ -48,5 +51,7 @@ main = defaultMain $ testGroup "Tests"
         , testTypecheck "bidi" "Let(id, x->x, ((x, z) -> z(x(id), x(1))) : ((Int -> a), (a, a) -> b) -> b)" $ Left $
             CannotUnify int (qt_ 3 --> qt_ 3)
         , testTypecheck "lamnotfun" "(x -> x) : int" $ Left LamNotFun
+        , testTypecheck "list" "[1,2,x->x]" $ Left $
+            CannotUnify int (qt_ 1 --> qt_ 1)
         ]
     ]

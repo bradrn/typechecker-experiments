@@ -14,6 +14,7 @@ data Expr
     | Lam [Text] Expr
     | Let Text Expr Expr
     | Asc Expr (Type Void)
+    | List [Expr]
     deriving (Eq, Show)
 
 data Type v
