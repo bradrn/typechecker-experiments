@@ -47,12 +47,12 @@ main = defaultMain $ testGroup "Tests"
         [ testTypecheck "occur" "x -> x(x)" $ Left OccursError
         , testTypecheck "name" "x -> y" $ Left $ UnknownName "y"
         , testTypecheck "unify" "Let(id, x->x, (x, z) -> z(x(id), x(1)))" $ Left $
-            CannotUnify (qt_ 3 --> qt_ 3) int
-        , testTypecheck "bidi" "Let(id, x->x, ((x, z) -> z(x(id), x(1))) : ((Int -> a), (a, a) -> b) -> b)" $ Left $
             CannotUnify int (qt_ 3 --> qt_ 3)
+        , testTypecheck "bidi" "Let(id, x->x, ((x, z) -> z(x(id), x(1))) : ((Int -> a), (a, a) -> b) -> b)" $ Left $
+            CannotUnify (qt_ 3 --> qt_ 3) int
         , testTypecheck "lamnotfun" "(x -> x) : Int" $ Left $
-            CannotUnify (qt_ 0 --> qt_ 0) int
+            CannotUnify int (qt_ 0 --> qt_ 0)
         , testTypecheck "list" "[1,2,x->x]" $ Left $
-            CannotUnify int (qt_ 1 --> qt_ 1)
+            CannotUnify (qt_ 1 --> qt_ 1) int
         ]
     ]

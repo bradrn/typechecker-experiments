@@ -163,18 +163,19 @@ generaliseAll = \t -> allFree >>= \fs -> go fs t
     go _fs (TQVar v) = pure $ TQVar v
     go fs (TFun ats rt) = TFun <$> traverse (go fs) ats <*> go fs rt
 
-unify :: Type (Var s) -> Type (Var s) -> Infer s ()
-unify t1 t2 | t1 == t2 = pure ()
-unify (TVar v1) t2 = readMutVar v1 >>= \case
+-- @t1 `subtype` t2@ means that t1 can be used anywhere t2 can
+subtype :: Type (Var s) -> Type (Var s) -> Infer s ()
+subtype t1 t2 | t1 == t2 = pure ()
+subtype (TVar v1) t2 = readMutVar v1 >>= \case
     Unbound _ -> occurs v1 t2 >> writeMutVar v1 (Link t2)
-    Link t1' -> unify t1' t2
-unify t1 (TVar v2) = readMutVar v2 >>= \case
+    Link t1' -> t1' `subtype` t2
+subtype t1 (TVar v2) = readMutVar v2 >>= \case
     Unbound _ -> occurs v2 t1 >> writeMutVar v2 (Link t1)
-    Link t2' -> unify t1 t2'
-unify (TFun at1s rt1) (TFun at2s rt2) = do
-    zipWithM_ unify at1s at2s
-    unify rt1 rt2
-unify t1 t2 = do
+    Link t2' -> t1 `subtype` t2'
+subtype (TFun at1s rt1) (TFun at2s rt2) = do
+    zipWithM_ subtype at2s at1s  -- note arguments flipped!
+    rt1 `subtype` rt2
+subtype t1 t2 = do
     t1' <- traceVars t1
     t2' <- traceVars t2
     throwError $ CannotUnify t1' t2'
@@ -188,10 +189,10 @@ check = \x t -> do
         tf <- infer f
         atas <- for as $ \a -> (a,) <$> newvar
         let tas = snd <$> atas
-        unify tf (TFun tas t)
-        for_ atas $ \(a, ta) -> do
-            ta' <- infer a
-            unify ta' ta
+        tf `subtype` TFun tas t  -- check function returns specified type
+        for_ atas $ \(a_given, ta) -> do
+            ta_given <- infer a_given
+            ta_given `subtype` ta  -- then check function accepts given arguments
     check' (Lam vs x) (TFun ats rt) =
         withEnv (foldr (.) id $ zipWith M.insert vs ats) $ check' x rt
     check' (Let v x y) t = do
@@ -201,7 +202,7 @@ check = \x t -> do
         traverse_ (flip check' rt) xs
     check' x t = do
         tx <- infer x
-        unify tx t
+        t `subtype` tx
 
 infer :: Expr -> Infer s (Type (Var s))
 infer (Lit _) = pure $ TCon "Int" []
@@ -212,7 +213,7 @@ infer (App f as) = do
     tf <- infer f
     tas <- traverse infer as
     tr <- newvar
-    unify tf (TFun tas tr)
+    tf `subtype` TFun tas tr
     pure tr
 infer (Lam vs x) = do
     vtvs <- for vs $ \v -> (v,) <$> newvar
@@ -225,7 +226,7 @@ infer (Let v x y) = do
     withEnv (M.insert v tv) $ infer y
 infer (List xs) = do
     tr <- newvar
-    traverse_ (unify tr <=< infer) xs
+    traverse_ ((`subtype` tr) <=< infer) xs
     pure $ TCon "List" [tr]
 infer (Asc x t) = check x t
 
