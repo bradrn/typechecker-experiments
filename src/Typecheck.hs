@@ -14,8 +14,8 @@ import Control.Monad.Primitive
 import Control.Monad.Reader
 import Control.Monad.ST
 import Data.Bifunctor
-import Data.Foldable (traverse_, for_)
 import Data.Map.Strict (Map)
+import Data.Monoid (First(..))
 import Data.Primitive.MutVar
 import Data.Text (Text)
 import Data.Traversable (for)
@@ -25,17 +25,12 @@ import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 
 import Expr
-
-data InferError
-    = OccursError
-    | CannotUnify (Type Void) (Type Void)
-    | UnknownName Text
-    deriving (Eq, Show)
+import qualified Core
 
 type Env v = Map Text (Type v)
 
-newtype Infer s a = Infer { getInfer :: ReaderT (MutVar s Int, Env (Var s)) (ExceptT InferError (ST s)) a }
-    deriving (Functor, Applicative, Monad, MonadError InferError, MonadReader (MutVar s Int, Env (Var s)))
+newtype Infer s a = Infer { getInfer :: ReaderT (MutVar s Int, Env (Var s)) (ST s) a }
+    deriving (Functor, Applicative, Monad, MonadReader (MutVar s Int, Env (Var s)))
 
 instance PrimMonad (Infer s) where
     type PrimState (Infer s) = s
@@ -50,6 +45,7 @@ traceVars (TCon t ats) = TCon t <$> traverse traceVars ats
 traceVars (TRigid t) = pure $ TRigid t
 traceVars (TQVar t) = pure $ TQVar t
 traceVars (TFun ats rt) = TFun <$> traverse traceVars ats <*> traceVars rt
+traceVars (TError err) = pure $ TError err
 
 rigidify :: Type (Var s) -> Infer s (Type (Var s))
 rigidify (TQVar v) = pure $ TRigid v
@@ -93,15 +89,24 @@ free _ = pure []
 allFree :: Infer s [Var s]
 allFree = concatTraverse free =<< asks (M.elems . snd)
 
-occurs :: Var s -> Type (Var s) -> Infer s ()
-occurs v = \case
-    TVar w
-      | v == w -> throwError OccursError
-      | otherwise -> readMutVar w >>= \case
-        Link t -> occurs v t
-        _ -> pure ()
-    TFun ats rt -> traverse_ (occurs v) ats >> occurs v rt
-    _ -> pure ()
+occurs :: Var s -> Type (Var s) -> Infer s a -> Infer s (Maybe InferError)
+occurs = \v t m -> occurs' v t >>= \case
+    Nothing -> Nothing <$ m
+    err -> pure err
+  where
+    occurs' :: Var s -> Type (Var s) -> Infer s (Maybe InferError)
+    occurs' v = \case
+        TVar w
+          | v == w -> pure $ Just OccursError
+          | otherwise -> readMutVar w >>= \case
+            Link t -> occurs' v t
+            _ -> pure Nothing
+        TFun ats rt -> do
+            os <- traverse (occurs' v) ats
+            case foldMap First os of
+                First Nothing -> occurs' v rt
+                First err -> pure err
+        _ -> pure Nothing
  
 instantiate :: Type (Var s) -> Infer s (Type (Var s))
 instantiate = fmap fst . go M.empty
@@ -126,6 +131,7 @@ instantiate = fmap fst . go M.empty
         (ats', subst') <- goMany subst ats
         (rt', subst'') <- go subst' rt
         pure (TFun ats' rt', subst'')
+    go subst (TError err) = pure (TError err, subst)
 
     goMany subst [] = pure ([], subst)
     goMany subst (t:ts) = do
@@ -146,6 +152,7 @@ generalise = \t -> allFree >>= \fs -> go fs t
     go _fs (TRigid v) = pure $ TQVar v
     go _fs (TQVar v) = pure $ TQVar v
     go fs (TFun ats rt) = TFun <$> traverse (go fs) ats <*> go fs rt
+    go _fs (TError err) = pure $ TError err
 
 generaliseAll :: Type (Var s) -> Infer s (Type Void)
 generaliseAll = \t -> allFree >>= \fs -> go fs t
@@ -162,78 +169,113 @@ generaliseAll = \t -> allFree >>= \fs -> go fs t
     go _fs (TRigid v) = pure $ TQVar v
     go _fs (TQVar v) = pure $ TQVar v
     go fs (TFun ats rt) = TFun <$> traverse (go fs) ats <*> go fs rt
+    go _fs (TError _err) = TQVar <$> gensym
 
 -- @t1 `subtype` t2@ means that t1 can be used anywhere t2 can
-subtype :: Type (Var s) -> Type (Var s) -> Infer s ()
-subtype t1 t2 | t1 == t2 = pure ()
-subtype (TVar v1) t2 = readMutVar v1 >>= \case
-    Unbound _ -> occurs v1 t2 >> writeMutVar v1 (Link t2)
-    Link t1' -> t1' `subtype` t2
-subtype t1 (TVar v2) = readMutVar v2 >>= \case
-    Unbound _ -> occurs v2 t1 >> writeMutVar v2 (Link t1)
-    Link t2' -> t1 `subtype` t2'
-subtype (TFun at1s rt1) (TFun at2s rt2) = do
-    zipWithM_ subtype at2s at1s  -- note arguments flipped!
-    rt1 `subtype` rt2
-subtype t1 t2 = do
-    t1' <- traceVars t1
-    t2' <- traceVars t2
-    throwError $ CannotUnify t1' t2'
+subtype
+    :: Type (Var s)
+    -> Type (Var s)
+    -> (InferError -> a)
+    -> Infer s a
+    -> Infer s a
+subtype = \t1 t2 f cont -> t1 `subtype'` t2 >>= \case
+    Nothing -> cont
+    Just err -> pure $ f err
+  where
+    subtype' :: Type (Var s) -> Type (Var s) -> Infer s (Maybe InferError)
+    subtype' t1 t2 | t1 == t2 = pure Nothing
+    subtype' (TVar v1) t2 = readMutVar v1 >>= \case
+        Unbound _ -> occurs v1 t2 $ writeMutVar v1 (Link t2)
+        Link t1' -> t1' `subtype'` t2
+    subtype' t1 (TVar v2) = readMutVar v2 >>= \case
+        Unbound _ -> occurs v2 t1 $ writeMutVar v2 (Link t1)
+        Link t2' -> t1 `subtype'` t2'
+    subtype' (TFun at1s rt1) (TFun at2s rt2) = do
+        os <- zipWithM subtype' at2s at1s  -- note arguments flipped!
+        case foldMap First os of
+            First Nothing -> rt1 `subtype'` rt2
+            First err -> pure err
+    subtype' (TError _) _ = pure Nothing
+    subtype' t1 t2 = do
+        t1' <- traceVars t1
+        t2' <- traceVars t2
+        pure $ Just $ CannotUnify t1' t2'
 
-check :: Expr -> Type Void -> Infer s (Type (Var s))
+deferError :: InferError -> (Type v, Core.Expr)
+deferError e = (TError e, Core.Deferred e)
+
+check :: Expr -> Type Void -> Infer s (Type (Var s), Core.Expr)
 check = \x t -> do
     t' <- rigidify $ vacuous t
-    t' <$ check' x t'
+    (t',) <$> check' x t'
   where
+    check' :: Expr -> Type (Var s) -> Infer s Core.Expr
     check' (App f as) t = do
-        tf <- infer f
+        (tf, xf) <- infer f
         atas <- for as $ \a -> (a,) <$> newvar
         let tas = snd <$> atas
-        tf `subtype` TFun tas t  -- check function returns specified type
-        for_ atas $ \(a_given, ta) -> do
-            ta_given <- infer a_given
-            ta_given `subtype` ta  -- then check function accepts given arguments
+        (tf `subtype` TFun tas t) Core.Deferred $ do  -- check function returns specified type
+            xas <- for atas $ \(a_given, ta) -> do
+                (ta_given, xa_given) <- infer a_given
+                (ta_given `subtype` ta) Core.Deferred $  -- then check function accepts given arguments
+                    pure xa_given
+            pure (Core.App xf xas)
     check' (Lam vs x) (TFun ats rt) =
-        withEnv (foldr (.) id $ zipWith M.insert vs ats) $ check' x rt
+        withEnv (foldr (.) id $ zipWith M.insert vs ats) $
+            Core.Lam vs <$> check' x rt
     check' (Let v x y) t = do
-        tv <- generalise =<< infer x
-        withEnv (M.insert v tv) $ check' y t
+        (tx', xx) <- infer x
+        tx <- generalise tx'
+        withEnv (M.insert v tx) $ do
+            xy <- check' y t
+            pure $ Core.Let v xx xy
     check' (List xs) (TCon "List" [rt]) =
-        traverse_ (flip check' rt) xs
+        Core.List <$> traverse (flip check' rt) xs
     check' x t = do
-        tx <- infer x
-        t `subtype` tx
-
-infer :: Expr -> Infer s (Type (Var s))
-infer (Lit _) = pure $ TCon "Int" []
+        (tx, xx) <- infer x
+        (t `subtype` tx) Core.Deferred $
+            pure xx
+    
+infer :: Expr -> Infer s (Type (Var s), Core.Expr)
+infer (Lit n) = pure (TCon "Int" [], Core.Lit n)
 infer (Var v) = lookupVar v >>= \case
-    Nothing -> throwError $ UnknownName v
-    Just t -> instantiate t
+    Nothing -> pure $ deferError $ UnknownName v
+    Just t -> (,Core.Var v) <$> instantiate t
 infer (App f as) = do
-    tf <- infer f
-    tas <- traverse infer as
+    (tf, xf) <- infer f
+    _as <- traverse infer as
+    let (tas, xas) = unzip _as
     tr <- newvar
-    tf `subtype` TFun tas tr
-    pure tr
+    (tf `subtype` TFun tas tr) deferError $ do
+        pure (tr, Core.App xf xas)
 infer (Lam vs x) = do
     vtvs <- for vs $ \v -> (v,) <$> newvar
     let tvs = snd <$> vtvs
-    tx <- withEnv (foldr (.) id $ uncurry M.insert <$> vtvs) $ infer x
-    pure $ TFun tvs tx
+    (tx, xx) <- withEnv (foldr (.) id $ uncurry M.insert <$> vtvs) $ infer x
+    pure (TFun tvs tx, Core.Lam vs xx)
 infer (Let v x y) = do
-    tv' <- infer x
-    tv <- generalise tv' -- =<< infer x
-    withEnv (M.insert v tv) $ infer y
+    (tx', xx) <- infer x
+    tx <- generalise tx'
+    withEnv (M.insert v tx) $ do
+        (ty, xy) <- infer y
+        pure (ty, Core.Let v xx xy)
 infer (List xs) = do
     tr <- newvar
-    traverse_ ((`subtype` tr) <=< infer) xs
-    pure $ TCon "List" [tr]
+    xxs <- for xs $ \x -> do
+        txx@(tx, _xx) <- infer x
+        fmap snd $  -- can discard type returned from @subtype@
+                    -- as only @tr@ is actually used in the end
+            (tx `subtype` tr) deferError $ pure txx
+    pure (TCon "List" [tr], Core.List xxs)
 infer (Asc x t) = check x t
 
-runInfer :: (forall s. Infer s a) -> Env Void -> Either InferError a
+runInfer :: (forall s. Infer s a) -> Env Void -> a
 runInfer i e = runST $ do
     v <- newMutVar 0
-    runExceptT $ flip runReaderT (v, M.map vacuous e) $ getInfer i
+    flip runReaderT (v, M.map vacuous e) $ getInfer i
 
-testInfer :: Expr -> Either InferError (Type Void)
-testInfer x = runInfer (infer x >>= generaliseAll) M.empty
+testInfer :: Env Void -> Expr -> (Type Void, Core.Expr)
+testInfer env x = runInfer (infer x >>= firstF generaliseAll) $ fmap vacuous env
+  where
+    firstF :: Functor f => (a -> f b) -> (a, c) -> f (b, c)
+    firstF f (a, c) = (,c) <$> f a

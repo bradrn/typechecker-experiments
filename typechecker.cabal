@@ -15,10 +15,12 @@ extra-source-files: CHANGELOG.md
 
 library
     ghc-options:      -Wall
-    exposed-modules:  Typecheck
+    exposed-modules:  Core
                     , Expr
+                    , Interpreter
                     , Lexer
                     , Parser
+                    , Typecheck
     -- other-modules:
     -- other-extensions:
     build-depends:    base ^>=4.16.3.0
@@ -51,3 +53,4 @@ test-suite typechecker-test
                     , typechecker
                     , tasty
                     , tasty-hunit
+                    , containers

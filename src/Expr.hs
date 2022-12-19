@@ -4,7 +4,7 @@
 module Expr where
 
 import Data.Primitive.MutVar
-import Data.Text (Text, intercalate)
+import Data.Text (Text, intercalate, pack)
 import Data.Void
 
 data Expr
@@ -23,7 +23,14 @@ data Type v
     | TRigid Text
     | TQVar Text
     | TFun [Type v] (Type v)
+    | TError InferError
     deriving (Eq, Show, Functor)
+
+data InferError
+    = OccursError
+    | CannotUnify (Type Void) (Type Void)
+    | UnknownName Text
+    deriving (Eq, Show)
 
 data TV s = Unbound Text | Link (Type (Var s))
 type Var s = MutVar s (TV s)
@@ -38,3 +45,4 @@ pprintType (TQVar t) = "?" <> t
 pprintType (TFun [at@(TQVar _)] rt) = pprintType at <> " -> " <> pprintType rt
 pprintType (TFun ats rt) =
     "(" <> intercalate "," (pprintType <$> ats) <> ") -> " <> pprintType rt
+pprintType (TError e) = "(" <> pack (show e) <> ")"
