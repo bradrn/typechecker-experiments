@@ -56,11 +56,13 @@ traceVars (TRigid t) = pure $ TRigid t
 traceVars (TQVar t) = pure $ TQVar t
 traceVars (TFun ats rt) = TFun <$> traverse traceVars ats <*> traceVars rt
 traceVars (TError err) = pure $ TError err
+traceVars (TNat i) = pure $ TNat i
 
 rigidify :: Expr.Type -> Infer s (Type (Var s))
 rigidify (Expr.TQVar v) = pure $ TRigid v
 rigidify (Expr.TFun ats rt) = TFun <$> traverse rigidify ats <*> rigidify rt
 rigidify (Expr.TCon t ts) = TCon t <$> traverse rigidify ts
+rigidify (Expr.TNat i) = pure $ TNat i
 
 lookupVar :: Text -> Infer s (Maybe (Either Expr.Type (Type (Var s))))
 lookupVar t = asks $ \c ->
@@ -145,6 +147,7 @@ instantiate = fmap fst . go M.empty
         (rt', subst'') <- go subst' rt
         pure (TFun ats' rt', subst'')
     go subst (TError err) = pure (TError err, subst)
+    go subst (TNat i) = pure (TNat i, subst)
 
     goMany subst [] = pure ([], subst)
     goMany subst (t:ts) = do
@@ -166,6 +169,7 @@ generalise = \t -> allFree >>= \fs -> go fs t
     go _fs (TQVar v) = pure $ TQVar v
     go fs (TFun ats rt) = TFun <$> traverse (go fs) ats <*> go fs rt
     go _fs (TError err) = pure $ TError err
+    go _fs (TNat i) = pure $ TNat i
 
 generaliseAll :: Type (Var s) -> Infer s (Type Void)
 generaliseAll = \t -> allFree >>= \fs -> go fs t
@@ -183,6 +187,7 @@ generaliseAll = \t -> allFree >>= \fs -> go fs t
     go _fs (TQVar v) = pure $ TQVar v
     go fs (TFun ats rt) = TFun <$> traverse (go fs) ats <*> go fs rt
     go _fs (TError _err) = TQVar <$> gensym
+    go _ (TNat i) = pure $ TNat i
 
 -- @t1 `unify` t2@ means that t1 can be used anywhere t2 can
 unify
@@ -237,7 +242,7 @@ check (Let v x y) t = do
     withEnv (M.insert v tx) $ do
         xy <- check y t
         pure $ Core.Let v xx xy
-check (List xs) (TCon "List" [rt]) =
+check (List xs) (TCon "Dim" [TNat 1, rt]) =
     Core.List <$> traverse (flip check rt) xs
 check x t = do
     (tx, xx) <- infer x
@@ -274,7 +279,7 @@ infer (List xs) = do
         fmap snd $  -- can discard type returned from @unify@
                     -- as only @tr@ is actually used in the end
             (tx `unify` tr) deferError $ pure txx
-    pure (TCon "List" [tr], Core.List xxs)
+    pure (TCon "Dim" [TNat 1, tr], Core.List xxs)
 infer (Asc x t) = do
     t' <- rigidify t
     x' <- check x t'

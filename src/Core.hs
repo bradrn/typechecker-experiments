@@ -25,6 +25,7 @@ data Type v
     | TQVar Text
     | TFun [Type v] (Type v)
     | TError InferError
+    | TNat Int
     deriving (Eq, Show, Functor)
 
 data InferError
@@ -40,3 +41,4 @@ exprToCore :: Expr.Type -> Type Void
 exprToCore (Expr.TCon t ts) = TCon t $ exprToCore <$> ts
 exprToCore (Expr.TQVar v) = TQVar v
 exprToCore (Expr.TFun ats rt) = TFun (exprToCore <$> ats) (exprToCore rt)
+exprToCore (Expr.TNat i) = TNat i

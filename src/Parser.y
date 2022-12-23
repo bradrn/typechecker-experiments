@@ -64,6 +64,7 @@ Type
   | Type '->' Type               { TFun [$1] $3 }
   | '(' some(Type) ')' '->' Type { TFun $2 $5 }
   | '(' Type ')'                 { $2 }
+  | lit                          { TNat $1 }
 
 {
 parseError :: [Lexer.Token] -> a

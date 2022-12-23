@@ -53,7 +53,7 @@ testInterpret n x v =
 qt = TQVar . fromString . ('t':) . show
 qt_ = TQVar . fromString . ("__t"++) . show
 int = TCon "Int" []
-list = TCon "List" . pure
+list = TCon "Dim" . (TNat 1:) . pure
 (-->) i o = TFun [i] o
 (-:>) is o = TFun is o
 
@@ -71,7 +71,7 @@ main = defaultMain $ testGroup "Tests"
         , testTypecheck "asc" "x -> (x : Int)"
               (int --> int, Lam ["x"] (Var "x"))
         , testTypecheck "list1" "[1,2,3]"                      (list int, List $ Lit <$> [1,2,3])
-        , testTypecheck "list2" "[1,2,3] : List(Int)"          (list int, List $ Lit <$> [1,2,3])
+        , testTypecheck "list2" "[1,2,3] : Dim(1, Int)"        (list int, List $ Lit <$> [1,2,3])
         -- below from https://okmij.org/ftp/ML/generalization/unsound.ml
         , testTypecheck "gen1" "(x, y) -> Let(x, x(y), x -> y(x))"
             ( [(qt 3 --> qt 4) --> qt 2, qt 3 --> qt 4] -:> (qt 3 --> qt 4)
