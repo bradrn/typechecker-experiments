@@ -4,7 +4,6 @@
 module Parser (parseExpr) where
 
 import Data.Text (Text, pack)
-import Data.Void (Void)
 
 import Expr
 import qualified Lexer
@@ -57,7 +56,7 @@ Expr
   | '(' Expr ')'                      { $2 }
 
 Type
-  :: { Type Void }
+  :: { Type }
   : var                          { TCon $1 [] }
   | var '(' some(Type) ')'       { TCon $1 $3 }
   | List '(' some(Type) ')'      { TCon "List" $3 }

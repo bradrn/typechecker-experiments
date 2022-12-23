@@ -13,7 +13,6 @@ import Control.Monad.Except
 import Control.Monad.Primitive
 import Control.Monad.Reader
 import Control.Monad.ST
-import Data.Bifunctor
 import Data.Map.Strict (Map)
 import Data.Monoid (First(..))
 import Data.Primitive.MutVar
@@ -24,13 +23,24 @@ import Data.Void
 import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 
-import Expr
+import Expr hiding (Type(..))
+import qualified Expr
+import Core (Var, Type(..), TV(..), InferError(..))
 import qualified Core
 
-type Env v = Map Text (Type v)
+type Env t = Map Text t
 
-newtype Infer s a = Infer { getInfer :: ReaderT (MutVar s Int, Env (Var s)) (ST s) a }
-    deriving (Functor, Applicative, Monad, MonadReader (MutVar s Int, Env (Var s)))
+data InferContext s = InferContext
+    { inferCounter :: MutVar s Int
+    , inferGlobalExpr :: Env Expr.Type
+    , inferLocalExpr :: Env (Type (Var s))
+    }
+
+modifyLocalExpr :: (Env (Type (Var s)) -> Env (Type (Var s))) -> InferContext s -> InferContext s
+modifyLocalExpr f = \i -> i { inferLocalExpr = f $ inferLocalExpr i }
+
+newtype Infer s a = Infer { getInfer :: ReaderT (InferContext s) (ST s) a }
+    deriving (Functor, Applicative, Monad, MonadReader (InferContext s))
 
 instance PrimMonad (Infer s) where
     type PrimState (Infer s) = s
@@ -47,23 +57,26 @@ traceVars (TQVar t) = pure $ TQVar t
 traceVars (TFun ats rt) = TFun <$> traverse traceVars ats <*> traceVars rt
 traceVars (TError err) = pure $ TError err
 
-rigidify :: Type (Var s) -> Infer s (Type (Var s))
-rigidify (TQVar v) = pure $ TRigid v
-rigidify t@(TVar v) = readMutVar v >>= \case
-    Unbound _ -> pure t
-    Link t' -> rigidify t'
-rigidify (TFun ats rt) = TFun <$> traverse rigidify ats <*> rigidify rt
-rigidify t = pure t
+rigidify :: Expr.Type -> Infer s (Type (Var s))
+rigidify (Expr.TQVar v) = pure $ TRigid v
+rigidify (Expr.TFun ats rt) = TFun <$> traverse rigidify ats <*> rigidify rt
+rigidify (Expr.TCon t ts) = TCon t <$> traverse rigidify ts
 
-lookupVar :: Text -> Infer s (Maybe (Type (Var s)))
-lookupVar t = asks $ M.lookup t . snd
+lookupVar :: Text -> Infer s (Maybe (Either Expr.Type (Type (Var s))))
+lookupVar t = asks $ \c ->
+    case M.lookup t (inferLocalExpr c) of
+        Just v -> Just $ Right v
+        Nothing ->
+            case M.lookup t (inferGlobalExpr c) of
+                Just v -> Just $ Left v
+                Nothing -> Nothing
 
-withEnv :: (Env (Var s) -> Env (Var s)) -> Infer s a -> Infer s a
-withEnv = local . second
+withEnv :: (Env (Type (Var s)) -> Env (Type (Var s))) -> Infer s a -> Infer s a
+withEnv = local . modifyLocalExpr
 
 fresh :: Infer s Int
 fresh = do
-    v <- asks fst
+    v <- asks inferCounter
     !i <- readMutVar v
     writeMutVar v (i+1)
     pure i
@@ -87,7 +100,7 @@ free (TFun ats rt) = (++) <$> concatTraverse free ats <*> free rt
 free _ = pure []
 
 allFree :: Infer s [Var s]
-allFree = concatTraverse free =<< asks (M.elems . snd)
+allFree = concatTraverse free =<< asks (M.elems . inferLocalExpr)
 
 occurs :: Var s -> Type (Var s) -> Infer s a -> Infer s (Maybe InferError)
 occurs = \v t m -> occurs' v t >>= \case
@@ -204,43 +217,38 @@ unify = \t1 t2 f cont -> t1 `unify'` t2 >>= \case
 deferError :: InferError -> (Type v, Core.Expr)
 deferError e = (TError e, Core.Deferred e)
 
-check :: Expr -> Type Void -> Infer s (Type (Var s), Core.Expr)
-check = \x t -> do
-    t' <- rigidify $ vacuous t
-    (t',) <$> check' x t'
-  where
-    check' :: Expr -> Type (Var s) -> Infer s Core.Expr
-    check' (App f as) t = do
-        (tf, xf) <- infer f
-        atas <- for as $ \a -> (a,) <$> newvar
-        let tas = snd <$> atas
-        (tf `unify` TFun tas t) Core.Deferred $ do  -- check function returns specified type
-            xas <- for atas $ \(a_given, ta) -> do
-                (ta_given, xa_given) <- infer a_given
-                (ta_given `unify` ta) Core.Deferred $  -- then check function accepts given arguments
-                    pure xa_given
-            pure (Core.App xf xas)
-    check' (Lam vs x) (TFun ats rt) =
-        withEnv (foldr (.) id $ zipWith M.insert vs ats) $
-            Core.Lam vs <$> check' x rt
-    check' (Let v x y) t = do
-        (tx', xx) <- infer x
-        tx <- generalise tx'
-        withEnv (M.insert v tx) $ do
-            xy <- check' y t
-            pure $ Core.Let v xx xy
-    check' (List xs) (TCon "List" [rt]) =
-        Core.List <$> traverse (flip check' rt) xs
-    check' x t = do
-        (tx, xx) <- infer x
-        (t `unify` tx) Core.Deferred $
-            pure xx
+check :: Expr -> Type (Var s) -> Infer s Core.Expr
+check (App f as) t = do
+    (tf, xf) <- infer f
+    atas <- for as $ \a -> (a,) <$> newvar
+    let tas = snd <$> atas
+    (tf `unify` TFun tas t) Core.Deferred $ do  -- check function returns specified type
+        xas <- for atas $ \(a_given, ta) -> do
+            (ta_given, xa_given) <- infer a_given
+            (ta_given `unify` ta) Core.Deferred $  -- then check function accepts given arguments
+                pure xa_given
+        pure (Core.App xf xas)
+check (Lam vs x) (TFun ats rt) =
+    withEnv (foldr (.) id $ zipWith M.insert vs ats) $
+        Core.Lam vs <$> check x rt
+check (Let v x y) t = do
+    (tx', xx) <- infer x
+    tx <- generalise tx'
+    withEnv (M.insert v tx) $ do
+        xy <- check y t
+        pure $ Core.Let v xx xy
+check (List xs) (TCon "List" [rt]) =
+    Core.List <$> traverse (flip check rt) xs
+check x t = do
+    (tx, xx) <- infer x
+    (t `unify` tx) Core.Deferred $
+        pure xx
     
 infer :: Expr -> Infer s (Type (Var s), Core.Expr)
 infer (Lit n) = pure (TCon "Int" [], Core.Lit n)
 infer (Var v) = lookupVar v >>= \case
     Nothing -> pure $ deferError $ UnknownName v
-    Just t -> (,Core.Var v) <$> instantiate t
+    Just t -> (,Core.Var v) <$> instantiate (either (vacuous . Core.exprToCore) id t)
 infer (App f as) = do
     (tf, xf) <- infer f
     _as <- traverse infer as
@@ -267,15 +275,23 @@ infer (List xs) = do
                     -- as only @tr@ is actually used in the end
             (tx `unify` tr) deferError $ pure txx
     pure (TCon "List" [tr], Core.List xxs)
-infer (Asc x t) = check x t
+infer (Asc x t) = do
+    t' <- rigidify t
+    x' <- check x t'
+    pure (t', x')
 
-runInfer :: (forall s. Infer s a) -> Env Void -> a
+runInfer :: (forall s. Infer s a) -> Env Expr.Type -> a
 runInfer i e = runST $ do
     v <- newMutVar 0
-    flip runReaderT (v, M.map vacuous e) $ getInfer i
+    let initContext = InferContext
+            { inferCounter = v
+            , inferGlobalExpr = e
+            , inferLocalExpr = M.empty
+            }
+    flip runReaderT initContext $ getInfer i
 
-testInfer :: Env Void -> Expr -> (Type Void, Core.Expr)
-testInfer env x = runInfer (infer x >>= firstF generaliseAll) $ fmap vacuous env
+testInfer :: Env Expr.Type -> Expr -> (Type Void, Core.Expr)
+testInfer env x = runInfer (infer x >>= firstF generaliseAll) env
   where
     firstF :: Functor f => (a -> f b) -> (a, c) -> f (b, c)
     firstF f (a, c) = (,c) <$> f a

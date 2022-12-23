@@ -7,7 +7,8 @@ import System.Console.Haskeline
 
 import qualified Data.Map.Strict as Map
 
-import Expr (Type(..), InferError(..))
+import Expr (Type(..))
+import Core (InferError(..))
 import Interpreter
 import Lexer (alexScanTokens)
 import Parser

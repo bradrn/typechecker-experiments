@@ -11,8 +11,8 @@ import Data.Void
 
 import qualified Data.Map.Strict as Map
 
+import qualified Expr
 import Core
-import Expr (Type(..), InferError(..))
 import Interpreter
 import Lexer (alexScanTokens)
 import Parser
@@ -34,7 +34,7 @@ testInterpret n x v =
         [ ("Add", VClosure Map.empty $ \[VInt i, VInt j] -> pure $ VInt $ i + j)
         ]
     defaultEnvType = Map.fromList
-        [ ("Add", TFun [TCon "Int" [], TCon "Int" []] (TCon "Int" []))
+        [ ("Add", Expr.TFun [Expr.TCon "Int" [], Expr.TCon "Int" []] (Expr.TCon "Int" []))
         ]
 
     -- adapted from tasty-hunit source

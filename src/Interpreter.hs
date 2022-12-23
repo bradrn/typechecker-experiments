@@ -14,7 +14,6 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Map.Merge.Strict as Map
 
 import Core
-import Expr (InferError)
 
 type Env m = Map Text (Value m)
 
