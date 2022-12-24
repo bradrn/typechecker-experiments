@@ -45,7 +45,6 @@ rigidify :: Expr.Type -> Infer Type
 rigidify (Expr.TQVar v) = pure $ TRigid $ WrapVar v
 rigidify (Expr.TFun ats rt) = TFun <$> traverse rigidify ats <*> rigidify rt
 rigidify (Expr.TCon t ts) = TCon t <$> traverse rigidify ts
-rigidify (Expr.TNat i) = pure $ TNat i
 
 lookupVar :: Text -> Infer (Maybe (Either Expr.Type Type))
 lookupVar t = asks $ \c ->
@@ -135,7 +134,6 @@ instantiate = fmap fst . go M.empty
         (rt', subst'') <- go subst' rt
         pure (TFun ats' rt', subst'')
     go subst (TError err) = pure (TError err, subst)
-    go subst (TNat i) = pure (TNat i, subst)
 
     goMany subst [] = pure ([], subst)
     goMany subst (t:ts) = do
@@ -157,7 +155,6 @@ generalise = \t -> allFree >>= \fs -> go fs t
     go _fs (TQVar v) = pure $ TQVar v
     go fs (TFun ats rt) = TFun <$> traverse (go fs) ats <*> go fs rt
     go _fs (TError err) = pure $ TError err
-    go _fs (TNat i) = pure $ TNat i
 
 generaliseAll :: Type -> Infer Type
 generaliseAll = \t -> allFree >>= \fs -> go fs t
@@ -175,7 +172,6 @@ generaliseAll = \t -> allFree >>= \fs -> go fs t
     go _fs (TQVar v) = pure $ TQVar v
     go fs (TFun ats rt) = TFun <$> traverse (go fs) ats <*> go fs rt
     go _fs (TError _err) = TQVar <$> gensym
-    go _ (TNat i) = pure $ TNat i
 
 -- @t1 `subtype` t2@ means that t1 can be used anywhere t2 can
 subtype
@@ -227,7 +223,7 @@ check (Let v x y) t = do
     withEnv (M.insert v tx) $ do
         xy <- check y t
         pure $ Core.Let v xx xy
-check (List xs) (TCon "Dim" [TNat 1, rt]) =
+check (List xs) (TCon "List" [rt]) =
     Core.List <$> traverse (flip check rt) xs
 check x t = do
     (tx, xx) <- infer x
@@ -264,7 +260,7 @@ infer (List xs) = do
         fmap snd $  -- can discard type returned from @subtype@
                     -- as only @tr@ is actually used in the end
             (tx `subtype` tr) deferError $ pure txx
-    pure (TCon "Dim" [TNat 1, tr], Core.List xxs)
+    pure (TCon "List" [tr], Core.List xxs)
 infer (Asc x t) = do
     t' <- rigidify t
     x' <- check x t'

@@ -2,7 +2,7 @@
 
 module Expr where
 
-import Data.Text (Text, intercalate, pack)
+import Data.Text (Text, intercalate)
 
 data Expr
     = Lit Int
@@ -18,7 +18,6 @@ data Type
     = TCon Text [Type]
     | TQVar Text
     | TFun [Type] Type
-    | TNat Int
     deriving (Eq, Show)
 
 pprintType :: Type -> Text
@@ -29,4 +28,3 @@ pprintType (TQVar t) = "?" <> t
 pprintType (TFun [at@(TQVar _)] rt) = pprintType at <> " -> " <> pprintType rt
 pprintType (TFun ats rt) =
     "(" <> intercalate "," (pprintType <$> ats) <> ") -> " <> pprintType rt
-pprintType (TNat i) = pack $ show i
