@@ -6,6 +6,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Control.Monad (unless)
+import Control.Monad.Reader (local)
 import Data.String (fromString)
 import Data.Void
 
@@ -19,7 +20,7 @@ import Parser
 import Typecheck
 
 typecheck :: String -> (Type, Expr)
-typecheck = testInfer Map.empty . parseExpr . alexScanTokens
+typecheck = testInfer defaultEnvType . parseExpr . alexScanTokens
 
 testTypecheck :: String -> String -> (Type, Expr) -> TestTree
 testTypecheck n x t = testCase n $ typecheck x @?= t
@@ -30,13 +31,6 @@ testInterpret n x v =
         interpret defaultEnvVal $ snd $
         testInfer defaultEnvType $ parseExpr $ alexScanTokens x
   where
-    defaultEnvVal = Map.fromList
-        [ ("Add", VClosure Map.empty $ \[VInt i, VInt j] -> pure $ VInt $ i + j)
-        ]
-    defaultEnvType = Map.fromList
-        [ ("Add", Expr.TFun [Expr.TCon "Int" [], Expr.TCon "Int" []] (Expr.TCon "Int" []))
-        ]
-
     -- adapted from tasty-hunit source
     assertConcreteEq :: Either InferError (Value m) -> Either InferError (Value m) -> Assertion
     assertConcreteEq expected actual =
@@ -48,6 +42,16 @@ testInterpret n x v =
         concreteEq' (Left e1) (Left e2) = e1 == e2
         concreteEq' (Right v1) (Right v2) = concreteEq v1 v2
         concreteEq' _ _ = False
+
+defaultEnvVal = Map.fromList
+    [ ("Add", VClosure Map.empty $ \[VInt i, VInt j] -> pure $ VInt $ i + j)
+    , ("Map", VClosure Map.empty $ \[VClosure env f, VList xs] ->
+        local (addNames env) $ fmap VList $ traverse (f . pure) xs)
+    ]
+defaultEnvType = Map.fromList
+    [ ("Add", Expr.TFun [Expr.TCon "Int" [], Expr.TCon "Int" []] (Expr.TCon "Int" []))
+    , ("Map", Expr.TFun [Expr.TFun [Expr.TQVar "a"] (Expr.TQVar "a"), Expr.TCon "List" [Expr.TQVar "a"]] (Expr.TCon "List" [Expr.TQVar "a"]))
+    ]
 
 -- helpers
 qt = TQVar . WrapVar . fromString . ('t':) . show
@@ -72,6 +76,12 @@ main = defaultMain $ testGroup "Tests"
               (int --> int, Lam ["x"] (Var "x"))
         , testTypecheck "list1" "[1,2,3]"                      (list int, List $ Lit <$> [1,2,3])
         , testTypecheck "list2" "[1,2,3] : List(Int)"          (list int, List $ Lit <$> [1,2,3])
+        , testTypecheck "hof1"  "Map(x->x, [1,2,3])"
+            (list int, App (Var "Map") [Lam ["x"] (Var "x"), List $ Lit <$> [1,2,3]])
+        , testTypecheck "hof2"  "Map(x->Add(x,1), [1,2,3])"
+            (list int, App (Var "Map") [Lam ["x"] (App (Var "add") [Var "x", Lit 1]), List $ Lit <$> [1,2,3]])
+        , testTypecheck "hof3"  "f -> Map(f, [1,2,3])"
+            ((int --> int) --> list int, Lam ["f"] $ App (Var "Map") [Var "f", List $ Lit <$> [1,2,3]])
         -- below from https://okmij.org/ftp/ML/generalization/unsound.ml
         , testTypecheck "gen1" "(x, y) -> Let(x, x(y), x -> y(x))"
             ( [(qt 3 --> qt 4) --> qt 2, qt 3 --> qt 4] -:> (qt 3 --> qt 4)

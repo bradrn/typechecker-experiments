@@ -41,6 +41,7 @@ executable typechecker
                     , typechecker
                     , containers
                     , haskeline
+                    , mtl
     hs-source-dirs:   app
     default-language: Haskell2010
 
@@ -54,3 +55,4 @@ test-suite typechecker-test
                     , tasty
                     , tasty-hunit
                     , containers
+                    , mtl
