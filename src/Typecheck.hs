@@ -189,32 +189,32 @@ generaliseAll = \t -> allFree >>= \fs -> go fs t
     go _fs (TError _err) = TQVar <$> gensym
     go _ (TNat i) = pure $ TNat i
 
--- @t1 `unify` t2@ means that t1 can be used anywhere t2 can
-unify
+-- @t1 `subtype` t2@ means that t1 can be used anywhere t2 can
+subtype
     :: Type (Var s)
     -> Type (Var s)
     -> (InferError -> a)
     -> Infer s a
     -> Infer s a
-unify = \t1 t2 f cont -> t1 `unify'` t2 >>= \case
+subtype = \t1 t2 f cont -> t1 `subtype'` t2 >>= \case
     Nothing -> cont
     Just err -> pure $ f err
   where
-    unify' :: Type (Var s) -> Type (Var s) -> Infer s (Maybe InferError)
-    unify' t1 t2 | t1 == t2 = pure Nothing
-    unify' (TVar v1) t2 = readMutVar v1 >>= \case
+    subtype' :: Type (Var s) -> Type (Var s) -> Infer s (Maybe InferError)
+    subtype' t1 t2 | t1 == t2 = pure Nothing
+    subtype' (TVar v1) t2 = readMutVar v1 >>= \case
         Unbound _ -> occurs v1 t2 $ writeMutVar v1 (Link t2)
-        Link t1' -> t1' `unify'` t2
-    unify' t1 (TVar v2) = readMutVar v2 >>= \case
+        Link t1' -> t1' `subtype'` t2
+    subtype' t1 (TVar v2) = readMutVar v2 >>= \case
         Unbound _ -> occurs v2 t1 $ writeMutVar v2 (Link t1)
-        Link t2' -> t1 `unify'` t2'
-    unify' (TFun at1s rt1) (TFun at2s rt2) = do
-        os <- zipWithM unify' at2s at1s  -- note arguments flipped!
+        Link t2' -> t1 `subtype'` t2'
+    subtype' (TFun at1s rt1) (TFun at2s rt2) = do
+        os <- zipWithM subtype' at2s at1s  -- note arguments flipped!
         case foldMap First os of
-            First Nothing -> rt1 `unify'` rt2
+            First Nothing -> rt1 `subtype'` rt2
             First err -> pure err
-    unify' (TError _) _ = pure Nothing
-    unify' t1 t2 = do
+    subtype' (TError _) _ = pure Nothing
+    subtype' t1 t2 = do
         t1' <- traceVars t1
         t2' <- traceVars t2
         pure $ Just $ CannotUnify t1' t2'
@@ -227,10 +227,10 @@ check (App f as) t = do
     (tf, xf) <- infer f
     atas <- for as $ \a -> (a,) <$> newvar
     let tas = snd <$> atas
-    (tf `unify` TFun tas t) Core.Deferred $ do  -- check function returns specified type
+    (tf `subtype` TFun tas t) Core.Deferred $ do  -- check function returns specified type
         xas <- for atas $ \(a_given, ta) -> do
             (ta_given, xa_given) <- infer a_given
-            (ta_given `unify` ta) Core.Deferred $  -- then check function accepts given arguments
+            (ta_given `subtype` ta) Core.Deferred $  -- then check function accepts given arguments
                 pure xa_given
         pure (Core.App xf xas)
 check (Lam vs x) (TFun ats rt) =
@@ -246,7 +246,7 @@ check (List xs) (TCon "Dim" [TNat 1, rt]) =
     Core.List <$> traverse (flip check rt) xs
 check x t = do
     (tx, xx) <- infer x
-    (t `unify` tx) Core.Deferred $
+    (t `subtype` tx) Core.Deferred $
         pure xx
     
 infer :: Expr -> Infer s (Type (Var s), Core.Expr)
@@ -259,7 +259,7 @@ infer (App f as) = do
     _as <- traverse infer as
     let (tas, xas) = unzip _as
     tr <- newvar
-    (tf `unify` TFun tas tr) deferError $ do
+    (tf `subtype` TFun tas tr) deferError $ do
         pure (tr, Core.App xf xas)
 infer (Lam vs x) = do
     vtvs <- for vs $ \v -> (v,) <$> newvar
@@ -276,9 +276,9 @@ infer (List xs) = do
     tr <- newvar
     xxs <- for xs $ \x -> do
         txx@(tx, _xx) <- infer x
-        fmap snd $  -- can discard type returned from @unify@
+        fmap snd $  -- can discard type returned from @subtype@
                     -- as only @tr@ is actually used in the end
-            (tx `unify` tr) deferError $ pure txx
+            (tx `subtype` tr) deferError $ pure txx
     pure (TCon "Dim" [TNat 1, tr], Core.List xxs)
 infer (Asc x t) = do
     t' <- rigidify t
