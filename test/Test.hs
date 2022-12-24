@@ -18,10 +18,10 @@ import Lexer (alexScanTokens)
 import Parser
 import Typecheck
 
-typecheck :: String -> (Type Void, Expr)
+typecheck :: String -> (Type, Expr)
 typecheck = testInfer Map.empty . parseExpr . alexScanTokens
 
-testTypecheck :: String -> String -> (Type Void, Expr) -> TestTree
+testTypecheck :: String -> String -> (Type, Expr) -> TestTree
 testTypecheck n x t = testCase n $ typecheck x @?= t
 
 testInterpret :: String -> String -> Either InferError (Value Interpret) -> TestTree
@@ -50,8 +50,8 @@ testInterpret n x v =
         concreteEq' _ _ = False
 
 -- helpers
-qt = TQVar . fromString . ('t':) . show
-qt_ = TQVar . fromString . ("__t"++) . show
+qt = TQVar . WrapVar . fromString . ('t':) . show
+qt_ = TVar . WrapVar . fromString . ("t"++) . show
 int = TCon "Int" []
 list = TCon "Dim" . (TNat 1:) . pure
 (-->) i o = TFun [i] o
