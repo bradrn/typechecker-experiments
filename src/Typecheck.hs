@@ -81,12 +81,28 @@ newvar = TVar <$> gensym
 concatTraverse :: Applicative m => (a -> m [b]) -> [a] -> m [b]
 concatTraverse f xs = concat <$> traverse f xs
 
+zonk :: Type -> Infer Type
+zonk (TCon t ts) = TCon t <$> traverse zonk ts
+zonk (TVar v) = getLink v >>= \case
+    Unbound -> pure $ TVar v
+    Link t -> do
+        t' <- zonk t
+        writeLink v t'
+        pure t'
+zonk (TRigid v) = pure $ TRigid v
+zonk (TQVar v) = pure $ TQVar v
+zonk (TFun ats rt) = TFun <$> traverse zonk ats <*> zonk rt
+zonk (TError e) = pure $ TError e
+
 free :: Type -> Infer [Var]
-free (TVar v) = getLink v >>= \case
-    Unbound -> pure [v]
-    Link t ->  free t
-free (TFun ats rt) = (++) <$> concatTraverse free ats <*> free rt
-free _ = pure []
+free = zonk >=> go  -- need to zonk to get rid of duplicate vars
+  where
+    go (TVar v) = getLink v >>= \case
+        Unbound -> pure [v]
+        Link t ->  go t
+    go (TFun ats rt) = (++) <$> concatTraverse go ats <*> go rt
+    go (TCon _ ts) = concatTraverse go ts
+    go _ = pure []
 
 allFree :: Infer [Var]
 allFree = concatTraverse free =<< asks (M.elems . inferLocalExpr)
@@ -97,18 +113,11 @@ occurs = \v t m -> occurs' v t >>= \case
     err -> pure err
   where
     occurs' :: Var -> Type -> Infer (Maybe InferError)
-    occurs' v = \case
-        TVar w
-          | v == w -> pure $ Just OccursError
-          | otherwise -> getLink w >>= \case
-            Link t -> occurs' v t
-            _ -> pure Nothing
-        TFun ats rt -> do
-            os <- traverse (occurs' v) ats
-            case foldMap First os of
-                First Nothing -> occurs' v rt
-                First err -> pure err
-        _ -> pure Nothing
+    occurs' v t = do
+        vs <- free t
+        pure $ if v `elem` vs
+           then Just OccursError
+           else Nothing
  
 instantiate :: Type -> Infer Type
 instantiate = fmap fst . go M.empty
@@ -186,6 +195,14 @@ subtype = \t1 t2 f cont -> t1 `subtype'` t2 >>= \case
   where
     subtype' :: Type -> Type -> Infer (Maybe InferError)
     subtype' t1 t2 | t1 == t2 = pure Nothing
+    subtype' (TVar v1) (TVar v2) = do
+        v1' <- getLink v1
+        v2' <- getLink v2
+        case (v1', v2') of
+            (Unbound, Unbound) -> Nothing <$ writeLink v1 (TVar v2)
+            (Link t1, Unbound) -> t1 `subtype'` TVar v2
+            (Unbound, Link t2) -> TVar v1 `subtype'` t2
+            (Link t1, Link t2) -> t1 `subtype'` t2
     subtype' (TVar v1) t2 = getLink v1 >>= \case
         Unbound -> occurs v1 t2 $ writeLink v1 t2
         Link t1' -> t1' `subtype'` t2
@@ -197,8 +214,13 @@ subtype = \t1 t2 f cont -> t1 `subtype'` t2 >>= \case
         case foldMap First os of
             First Nothing -> rt1 `subtype'` rt2
             First err -> pure err
+    subtype' (TCon t1 ts1) (TCon t2 ts2) | t1 == t2 =
+        getFirst . foldMap First <$> zipWithM subtype' ts1 ts2
     subtype' (TError _) _ = pure Nothing
-    subtype' t1 t2 = pure $ Just $ CannotUnify t1 t2
+    subtype' t1 t2 = do
+        t1' <- zonk t1
+        t2' <- zonk t2
+        pure $ Just $ CannotUnify t1' t2'
 
 deferError :: InferError -> (Type, Core.Expr)
 deferError e = (TError e, Core.Deferred e)

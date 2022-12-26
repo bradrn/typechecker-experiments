@@ -79,7 +79,7 @@ main = defaultMain $ testGroup "Tests"
         , testTypecheck "hof1"  "Map(x->x, [1,2,3])"
             (list int, App (Var "Map") [Lam ["x"] (Var "x"), List $ Lit <$> [1,2,3]])
         , testTypecheck "hof2"  "Map(x->Add(x,1), [1,2,3])"
-            (list int, App (Var "Map") [Lam ["x"] (App (Var "add") [Var "x", Lit 1]), List $ Lit <$> [1,2,3]])
+            (list int, App (Var "Map") [Lam ["x"] (App (Var "Add") [Var "x", Lit 1]), List $ Lit <$> [1,2,3]])
         , testTypecheck "hof3"  "f -> Map(f, [1,2,3])"
             ((int --> int) --> list int, Lam ["f"] $ App (Var "Map") [Var "f", List $ Lit <$> [1,2,3]])
         -- below from https://okmij.org/ftp/ML/generalization/unsound.ml
