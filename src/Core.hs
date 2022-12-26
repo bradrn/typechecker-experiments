@@ -16,7 +16,7 @@ data Expr
 
 data Type
     = TCon Text [Type]
-    | TVar Var
+    | TMeta Int
     | TRigid Var
     | TQVar Var
     | TFun [Type] Type

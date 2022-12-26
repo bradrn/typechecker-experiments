@@ -55,7 +55,7 @@ defaultEnvType = Map.fromList
 
 -- helpers
 qt = TQVar . WrapVar . fromString . ('t':) . show
-qt_ = TVar . WrapVar . fromString . ("t"++) . show
+qt_ = TMeta
 int = TCon "Int" []
 list = TCon "List" . pure
 (-->) i o = TFun [i] o
