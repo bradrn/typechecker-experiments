@@ -272,6 +272,7 @@ infer (Lit n) = pure (TCon "Int" [], Core.Lit n)
 infer (Var v) = lookupVar v >>= \case
     Nothing -> pure $ deferError $ UnknownName v
     Just t -> (,Core.Var v) <$> instantiate (either Core.exprToCore id t)
+infer (Op o) = pure (TFun [TCon "Int" [], TCon "Int" []] (TCon "Int" []), Core.Op o)
 infer (App f as) = do
     (tf, xf) <- infer f
     splitFunction (length as) tf >>= \case

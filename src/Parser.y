@@ -25,9 +25,15 @@ import qualified Lexer
   '['     { Lexer.LBrk }
   ']'     { Lexer.RBrk }
   ':'     { Lexer.Colon }
+  '+'     { Lexer.Plus }
+  '-'     { Lexer.Minus }
+  '*'     { Lexer.Times }
   tvarstr { Lexer.TVar $$  }
   lit     { Lexer.Lit $$ }
   varstr  { Lexer.Var $$ }
+
+%left '+' '-'
+%left '*'
 
 %%
 
@@ -53,7 +59,14 @@ Expr
   | '[' some(Expr) ']'                { List $2 }
   | Expr ':' Type                     { Asc $1 $3 }
   | Expr '(' some(Expr) ')'           { App $1 $3 }
+  | Expr Op Expr                      { App (Op $2) [$1,$3] }
   | '(' Expr ')'                      { $2 }
+
+Op
+  :: { Op }
+  : '+' { Plus }
+  | '-' { Minus }
+  | '*' { Times }
 
 Type
   :: { Type }

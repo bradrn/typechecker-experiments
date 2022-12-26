@@ -13,6 +13,7 @@ import Data.Void
 import qualified Data.Map.Strict as Map
 
 import qualified Expr
+import Expr (Op(..))
 import Core
 import Interpreter
 import Lexer (alexScanTokens)
@@ -66,6 +67,8 @@ main = defaultMain $ testGroup "Tests"
     [ testGroup "Success"
         [ testTypecheck "id" "x -> x"                          (qt 0 --> qt 0, Lam ["x"] (Var "x"))
         , testTypecheck "let" "x -> Let(y, x, y)"              (qt 0 --> qt 0, Lam ["x"] (Let "y" (Var "x") (Var "y")))
+        , testTypecheck "prec" "1+2*3-4"
+              (int, App (Op Times) [App (Op Plus) [Lit 1, App (Op Times) [Lit 2, Lit 3]], Lit 4])
         , testTypecheck "intfun" "x -> Let(y, x, y(1))"
               ((int --> qt 2) --> qt 2, Lam ["x"] $ Let "y" (Var "x") $ App (Var "y") [Lit 1])
         , testTypecheck "unify" "(x, y) -> z -> z(x(1), x(y))"

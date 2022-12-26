@@ -14,6 +14,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Map.Merge.Strict as Map
 
 import Core
+import Expr (Op(..))
 
 type Env m = Map Text (Value m)
 
@@ -52,6 +53,9 @@ interpret = \env e -> runInterpret (interpret' e) env
         asks (Map.lookup t) <&> \case
             Nothing -> error "interpret': unknown name - error in typechecker!"
             Just v -> v
+    interpret' (Op Plus) = pure $ VClosure Map.empty $ toOp (+)
+    interpret' (Op Minus) = pure $ VClosure Map.empty $ toOp (-)
+    interpret' (Op Times) = pure $ VClosure Map.empty $ toOp (*)
     interpret' (App f as) =
         interpret' f >>= \case
             VClosure cl f' -> do
@@ -67,3 +71,7 @@ interpret = \env e -> runInterpret (interpret' e) env
         local (Map.insert v x') $ interpret' y
     interpret' (List xs) = VList <$> traverse interpret' xs
     interpret' (Deferred err) = throwError err
+
+toOp :: Applicative m => (Int -> Int -> Int) -> [Value m] -> m (Value m)
+toOp op [VInt x, VInt y] = pure $ VInt $ x `op` y
+toOp _ _ = error "toOp: wrong parameters - error in typechecker!"

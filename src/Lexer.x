@@ -21,6 +21,9 @@ tokens :-
     "]"        { const RBrk }
     ":"        { const Colon }
     ","        { const Comma }
+    "+"        { const Plus }
+    "-"        { const Minus }
+    "*"        { const Times }
     $digit+    { Lit . read }
     "?" @ident { TVar . tail }
     @ident     { Var }
@@ -34,5 +37,6 @@ data Token
     | LBrk | RBrk
     | Colon | TVar String 
     | Lit Int | Var String
+    | Plus | Minus | Times
     deriving (Eq, Show)
 }

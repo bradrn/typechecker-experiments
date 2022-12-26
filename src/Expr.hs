@@ -7,11 +7,15 @@ import Data.Text (Text, intercalate)
 data Expr
     = Lit Int
     | Var Text
+    | Op Op
     | App Expr [Expr]
     | Lam [Text] Expr
     | Let Text Expr Expr
     | Asc Expr Type
     | List [Expr]
+    deriving (Eq, Show)
+
+data Op = Plus | Minus | Times
     deriving (Eq, Show)
 
 data Type

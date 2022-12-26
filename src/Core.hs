@@ -7,6 +7,7 @@ import qualified Expr
 data Expr
     = Lit Int
     | Var Text
+    | Op Expr.Op
     | App Expr [Expr]
     | Lam [Text] Expr
     | Let Text Expr Expr
