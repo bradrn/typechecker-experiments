@@ -230,6 +230,14 @@ subtype = \t1 t2 f cont -> t1 `subtype'` t2 >>= \case
 deferError :: InferError -> (Type, Core.Expr)
 deferError e = (TError e, Core.Deferred e)
 
+splitFunction :: Int -> Type -> Infer (Either InferError ([Type], Type))
+splitFunction _ (TFun ats rt) = pure $ Right (ats, rt)
+splitFunction n t = do
+    ats <- replicateM n $ TMeta <$> fresh
+    rt <- TMeta <$> fresh
+    (t `subtype` TFun ats rt) Left $
+        pure $ Right (ats, rt)
+    
 check :: Expr -> Type -> Infer Core.Expr
 check (App f as) t = do
     (tf, xf) <- infer f
@@ -241,9 +249,11 @@ check (App f as) t = do
             (ta_given `subtype` ta) Core.Deferred $  -- then check function accepts given arguments
                 pure xa_given
         pure (Core.App xf xas)
-check (Lam vs x) (TFun ats rt) =
-    withEnv (foldr (.) id $ zipWith M.insert vs ats) $
-        Core.Lam vs <$> check x rt
+check (Lam vs x) t = splitFunction (length vs) t >>= \case
+    Left err -> pure $ Core.Deferred err
+    Right (ats, rt) -> do
+        withEnv (foldr (.) id $ zipWith M.insert vs ats) $
+            Core.Lam vs <$> check x rt
 check (Let v x y) t = do
     (tx', xx) <- infer x
     tx <- generalise tx'
@@ -264,11 +274,10 @@ infer (Var v) = lookupVar v >>= \case
     Just t -> (,Core.Var v) <$> instantiate (either Core.exprToCore id t)
 infer (App f as) = do
     (tf, xf) <- infer f
-    _as <- traverse infer as
-    let (tas, xas) = unzip _as
-    tr <- newvar
-    (tf `subtype` TFun tas tr) deferError $ do
-        pure (tr, Core.App xf xas)
+    splitFunction (length as) tf >>= \case
+        Left err -> pure (tf, Core.Deferred err)
+        Right (ats, rt) ->
+            (rt,) . Core.App xf <$> zipWithM check as ats
 infer (Lam vs x) = do
     vtvs <- for vs $ \v -> (v,) <$> newvar
     let tvs = snd <$> vtvs
@@ -280,14 +289,11 @@ infer (Let v x y) = do
     withEnv (M.insert v tx) $ do
         (ty, xy) <- infer y
         pure (ty, Core.Let v xx xy)
-infer (List xs) = do
-    tr <- newvar
-    xxs <- for xs $ \x -> do
-        txx@(tx, _xx) <- infer x
-        fmap snd $  -- can discard type returned from @subtype@
-                    -- as only @tr@ is actually used in the end
-            (tx `subtype` tr) deferError $ pure txx
-    pure (TCon "List" [tr], Core.List xxs)
+infer (List []) = (,Core.List []) . TCon "List" . pure <$> newvar
+infer (List (x0:xs)) = do
+    (tr, xx0) <- infer x0
+    xxs <- for xs $ \x -> check x tr
+    pure (TCon "List" [tr], Core.List $ xx0:xxs)
 infer (Asc x t) = do
     t' <- rigidify t
     x' <- check x t'

@@ -67,7 +67,7 @@ main = defaultMain $ testGroup "Tests"
         [ testTypecheck "id" "x -> x"                          (qt 0 --> qt 0, Lam ["x"] (Var "x"))
         , testTypecheck "let" "x -> Let(y, x, y)"              (qt 0 --> qt 0, Lam ["x"] (Let "y" (Var "x") (Var "y")))
         , testTypecheck "intfun" "x -> Let(y, x, y(1))"
-              ((int --> qt 1) --> qt 1, Lam ["x"] $ Let "y" (Var "x") $ App (Var "y") [Lit 1])
+              ((int --> qt 2) --> qt 2, Lam ["x"] $ Let "y" (Var "x") $ App (Var "y") [Lit 1])
         , testTypecheck "unify" "(x, y) -> z -> z(x(1), x(y))"
               ( TFun [int --> qt 4, int] $ ([qt 4, qt 4] -:> qt 5) --> qt 5
               , Lam ["x", "y"] $ Lam ["z"] $ App (Var "z") [App (Var "x") [Lit 1], App (Var "x") [Var "y"]]
@@ -84,37 +84,37 @@ main = defaultMain $ testGroup "Tests"
             ((int --> int) --> list int, Lam ["f"] $ App (Var "Map") [Var "f", List $ Lit <$> [1,2,3]])
         -- below from https://okmij.org/ftp/ML/generalization/unsound.ml
         , testTypecheck "gen1" "(x, y) -> Let(x, x(y), x -> y(x))"
-            ( [(qt 3 --> qt 4) --> qt 2, qt 3 --> qt 4] -:> (qt 3 --> qt 4)
+            ( [(qt 4 --> qt 6) --> qt 3, qt 4 --> qt 6] -:> (qt 4 --> qt 6)
             , Lam ["x", "y"] $ Let "x" (App (Var "x") [Var "y"]) $ Lam ["x"] $ App (Var "y") [Var "x"]
             )
         , testTypecheck "gen2" "Let(id, x->x, x -> Let(y, Let(z, x(id), z), y))"
-            ( ((qt 2 --> qt 2) --> qt 3) --> qt 3
+            ( ((qt 4 --> qt 4) --> qt 3) --> qt 3
             , Let "id" (Lam ["x"] $ Var "x") $ Lam ["x"] $ Let "y" (Let "z" (App (Var "x") [Var "id"]) (Var "z")) (Var "y")
             )
         ]
     , testGroup "Fail"
         [ testTypecheck "occur" "x -> x(x)"
-            (qt 0 --> qt 2, Lam ["x"] (Deferred OccursError))
+            ((qt 1 --> qt 2) --> qt 2, Lam ["x"] (App (Var "x") [Deferred OccursError]))
         , testTypecheck "name" "x -> y"
             (qt 0 --> qt 1, Lam ["x"] (Deferred (UnknownName "y")))
         , testTypecheck "unify" "Let(id, x->x, (x, z) -> z(x(id), x(1)))"
-            ( [(qt 3 --> qt 3) --> qt 4, [qt 4, qt 7] -:> qt 6] -:> qt 6
+            ( [(qt 7 --> qt 7) --> qt 4, [qt 4, qt 4] -:> qt 5] -:> qt 5
             , Let "id" (Lam ["x"] (Var "x")) $ Lam ["x","z"] $ App (Var "z")
                 [ App (Var "x") [Var "id"]
-                , Deferred $ CannotUnify int (qt_ 3 --> qt_ 3)
+                , App (Var "x") [Deferred $ CannotUnify int (qt_ 7 --> qt_ 7)]
                 ]
             )
         , testTypecheck "bidi" "Let(id, x->x, ((x, z) -> z(x(id), x(1))) : ((Int -> a), (a, a) -> b) -> b)"
             ( [int --> TCon "a" [], [TCon "a" [], TCon "a" []] -:> TCon "b" []] -:> TCon "b" []
             , Let "id" (Lam ["x"] (Var "x")) $ Lam ["x","z"] $ App (Var "z")
-                [ Deferred $ CannotUnify (qt_ 3 --> qt_ 3) int
+                [ App (Var "x") [Deferred $ CannotUnify int (qt_ 3 --> qt_ 3)]
                 , App (Var "x") [Lit 1]
                 ]
             )
         , testTypecheck "lamnotfun" "(x -> x) : Int"
-            (int, Deferred $ CannotUnify int (qt_ 0 --> qt_ 0))
+            (int, Deferred $ CannotUnify int (qt_ 0 --> qt_ 1))
         , testTypecheck "list" "[1,2,x->x]"
-            (list int, List [Lit 1, Lit 2, Deferred $ CannotUnify (qt_ 1 --> qt_ 1) int])
+            (list int, List [Lit 1, Lit 2, Deferred $ CannotUnify int (qt_ 0 --> qt_ 1)])
         ]
     , testGroup "Interpreted"
         [ testInterpret "id" "(x -> x)(1)" $ Right $ VInt 1
