@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -9,21 +10,19 @@ module Typecheck where
 
 import Control.Monad
 import Control.Monad.Reader
-import Control.Monad.State.Strict
-import Data.IntMap.Strict (IntMap)
 import Data.Map.Strict (Map)
 import Data.Monoid (First(..))
 import Data.Text (Text)
 import Data.Traversable (for)
 
 import qualified Data.Map.Strict as M
-import qualified Data.IntMap.Strict as IM
 import qualified Data.Text as T
 
 import Expr hiding (Type(..))
 import qualified Expr
-import Core (Var(..), Type(..), TV(..), InferError(..))
+import Core (Var(..), Type(..), InferError(..))
 import qualified Core
+import UnionFind
 
 type Env t = Map Text t
 
@@ -32,16 +31,11 @@ data InferContext = InferContext
     , inferLocalEnv :: Env Type
     } deriving (Eq, Show)
 
-data InferState = InferState
-    { inferCounter :: Int
-    , inferSubst   :: IntMap Type
-    } deriving (Eq, Show)
-
 modifyLocalEnv :: (Env Type -> Env Type) -> InferContext -> InferContext
 modifyLocalEnv f = \i -> i { inferLocalEnv = f $ inferLocalEnv i }
 
-newtype Infer a = Infer { getInfer :: ReaderT InferContext (State InferState) a }
-    deriving (Functor, Applicative, Monad, MonadReader InferContext, MonadState InferState)
+newtype Infer a = Infer { getInfer :: ReaderT InferContext (UnionFind Type) a }
+    deriving (Functor, Applicative, Monad, MonadReader InferContext, MonadUnionFind Type)
 
 rigidify :: Expr.Type -> Infer Type
 rigidify (Expr.TQVar v) = pure $ TRigid $ WrapVar v
@@ -57,31 +51,14 @@ lookupVar t = asks $ \c ->
                 Just v -> Just $ Left v
                 Nothing -> Nothing
 
-readLink :: Int -> Infer TV
-readLink v = gets $ \s ->
-    maybe Unbound Link $ IM.lookup v (inferSubst s)
-
-writeLink :: Int -> Type -> Infer ()
-writeLink v t = modify $ \s ->
-    s { inferSubst = IM.insert v t $ inferSubst s }
-    
 withEnv :: (Env Type -> Env Type) -> Infer a -> Infer a
 withEnv = local . modifyLocalEnv
-
-fresh :: Infer Int
-fresh = do
-    i <- gets inferCounter
-    modify $ \s -> s { inferCounter = i+1 }
-    pure i
 
 toVar :: Int -> Var
 toVar = WrapVar . ("t"<>) . T.pack . show
 
 gensym :: Infer Var
-gensym = toVar <$> fresh
-
-newvar :: Infer Type
-newvar = TMeta <$> fresh
+gensym = toVar <$> newCount
 
 concatTraverse :: Applicative m => (a -> m [b]) -> [a] -> m [b]
 concatTraverse f xs = concat <$> traverse f xs
@@ -99,7 +76,7 @@ zonk (TQVar v) = pure $ TQVar v
 zonk (TFun ats rt) = TFun <$> traverse zonk ats <*> zonk rt
 zonk (TError e) = pure $ TError e
 
-free :: Type -> Infer [Int]
+free :: Type -> Infer [Uniq]
 free = zonk >=> go  -- need to zonk to get rid of duplicate vars
   where
     go (TMeta v) = readLink v >>= \case
@@ -109,15 +86,15 @@ free = zonk >=> go  -- need to zonk to get rid of duplicate vars
     go (TCon _ ts) = concatTraverse go ts
     go _ = pure []
 
-allFree :: Infer [Int]
+allFree :: Infer [Uniq]
 allFree = concatTraverse free =<< asks (M.elems . inferLocalEnv)
 
-occurs :: Int -> Type -> Infer a -> Infer (Maybe InferError)
+occurs :: Uniq -> Type -> Infer a -> Infer (Maybe InferError)
 occurs = \v t m -> occurs' v t >>= \case
     Nothing -> Nothing <$ m
     err -> pure err
   where
-    occurs' :: Int -> Type -> Infer (Maybe InferError)
+    occurs' :: Uniq -> Type -> Infer (Maybe InferError)
     occurs' v t = do
         vs <- free t
         pure $ if v `elem` vs
@@ -141,7 +118,7 @@ instantiate = fmap fst . go M.empty
         case M.lookup v subst of
             Just v' -> pure (v', subst)
             Nothing -> do
-                v' <- newvar
+                v' <- TMeta <$> newVar
                 pure (v', M.insert v v' subst)
     go subst (TFun ats rt) = do
         (ats', subst') <- goMany subst ats
@@ -158,12 +135,12 @@ instantiate = fmap fst . go M.empty
 generalise :: Type -> Infer Type
 generalise = \t -> allFree >>= \fs -> go fs t
   where
-    go :: [Int] -> Type -> Infer Type
+    go :: [Uniq] -> Type -> Infer Type
     go fs (TCon t ats) = TCon t <$> traverse (go fs) ats
     go fs (TMeta v) = readLink v >>= \case
         Unbound
             | v `elem` fs -> pure $ TMeta v
-            | otherwise -> pure $ TQVar $ toVar v
+            | otherwise -> pure $ TQVar $ toVar $ label v
         Link t -> go fs t
     go _fs (TRigid v) = pure $ TQVar v
     go _fs (TQVar v) = pure $ TQVar v
@@ -173,14 +150,14 @@ generalise = \t -> allFree >>= \fs -> go fs t
 generaliseAll :: Type -> Infer Type
 generaliseAll = \t -> allFree >>= \fs -> go fs t
   where
-    go :: [Int] -> Type -> Infer Type
+    go :: [Uniq] -> Type -> Infer Type
     go fs (TCon t ats) = TCon t <$> traverse (go fs) ats
     go fs (TMeta v) = readLink v >>= \case
         Unbound
             | v `elem` fs -> do
                   let fs' = TMeta <$> fs
                   error $ "generaliseAll: extra free! " ++ show (v, fs')
-            | otherwise -> pure $ TQVar $ toVar v
+            | otherwise -> pure $ TQVar $ toVar $ label v
         Link t -> go fs t
     go _fs (TRigid v) = pure $ TQVar v
     go _fs (TQVar v) = pure $ TQVar v
@@ -233,15 +210,15 @@ deferError e = (TError e, Core.Deferred e)
 splitFunction :: Int -> Type -> Infer (Either InferError ([Type], Type))
 splitFunction _ (TFun ats rt) = pure $ Right (ats, rt)
 splitFunction n t = do
-    ats <- replicateM n $ TMeta <$> fresh
-    rt <- TMeta <$> fresh
+    ats <- replicateM n $ TMeta <$> newVar
+    rt <- TMeta <$> newVar
     (t `subtype` TFun ats rt) Left $
         pure $ Right (ats, rt)
     
 check :: Expr -> Type -> Infer Core.Expr
 check (App f as) t = do
     (tf, xf) <- infer f
-    atas <- for as $ \a -> (a,) <$> newvar
+    atas <- for as $ \a -> (a,) . TMeta <$> newVar
     let tas = snd <$> atas
     (tf `subtype` TFun tas t) Core.Deferred $ do  -- check function returns specified type
         xas <- for atas $ \(a_given, ta) -> do
@@ -280,7 +257,7 @@ infer (App f as) = do
         Right (ats, rt) ->
             (rt,) . Core.App xf <$> zipWithM check as ats
 infer (Lam vs x) = do
-    vtvs <- for vs $ \v -> (v,) <$> newvar
+    vtvs <- for vs $ \v -> (v,) . TMeta <$> newVar
     let tvs = snd <$> vtvs
     (tx, xx) <- withEnv (foldr (.) id $ uncurry M.insert <$> vtvs) $ infer x
     pure (TFun tvs tx, Core.Lam vs xx)
@@ -290,7 +267,7 @@ infer (Let v x y) = do
     withEnv (M.insert v tx) $ do
         (ty, xy) <- infer y
         pure (ty, Core.Let v xx xy)
-infer (List []) = (,Core.List []) . TCon "List" . pure <$> newvar
+infer (List []) = (,Core.List []) . TCon "List" . pure . TMeta <$> newVar
 infer (List (x0:xs)) = do
     (tr, xx0) <- infer x0
     xxs <- for xs $ \x -> check x tr
@@ -302,15 +279,11 @@ infer (Asc x t) = do
 
 runInfer :: Infer a -> Env Expr.Type -> a
 runInfer i e =
-    flip evalState initState $ flip runReaderT initContext $ getInfer i
+    evalUnionFind $ flip runReaderT initContext $ getInfer i
   where
     initContext = InferContext
         { inferGlobalEnv = e
         , inferLocalEnv = M.empty
-        }
-    initState = InferState
-        { inferCounter = 0
-        , inferSubst = IM.empty
         }
 
 testInfer :: Env Expr.Type -> Expr -> (Type, Core.Expr)

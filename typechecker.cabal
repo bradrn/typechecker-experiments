@@ -21,6 +21,7 @@ library
                     , Lexer
                     , Parser
                     , Typecheck
+                    , UnionFind
     -- other-modules:
     -- other-extensions:
     build-depends:    base ^>=4.16.3.0

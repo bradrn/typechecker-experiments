@@ -3,6 +3,7 @@ module Core where
 import Data.Text (Text)
 
 import qualified Expr
+import UnionFind (Uniq)
 
 data Expr
     = Lit Int
@@ -17,7 +18,7 @@ data Expr
 
 data Type
     = TCon Text [Type]
-    | TMeta Int
+    | TMeta Uniq
     | TRigid Var
     | TQVar Var
     | TFun [Type] Type
@@ -28,9 +29,6 @@ data InferError
     = OccursError
     | CannotUnify Type Type
     | UnknownName Text
-    deriving (Eq, Show)
-
-data TV = Unbound | Link Type
     deriving (Eq, Show)
 
 newtype Var = WrapVar { readVar :: Text }

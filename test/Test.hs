@@ -19,6 +19,7 @@ import Interpreter
 import Lexer (alexScanTokens)
 import Parser
 import Typecheck
+import UnionFind (Uniq(..))
 
 typecheck :: String -> (Type, Expr)
 typecheck = testInfer defaultEnvType . parseExpr . alexScanTokens
@@ -56,7 +57,7 @@ defaultEnvType = Map.fromList
 
 -- helpers
 qt = TQVar . WrapVar . fromString . ('t':) . show
-qt_ = TMeta
+qt_ = TMeta . Uniq
 int = TCon "Int" []
 list = TCon "List" . pure
 (-->) i o = TFun [i] o
